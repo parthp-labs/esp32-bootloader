@@ -7,6 +7,54 @@
 #define TIMG0_WDTFEED_REG (*(volatile uint32_t *)0x3FF5F060)
 #define WDT_WKEY_VALUE 0x50D83AA1
 
+#define CMD (volatile uint32_t*) 0x3FF42000
+#define ADDR (volatile uint32_t*) 0x3FF42004
+#define CTRL (volatile uint32_t*) 0x3FF42008
+#define CLOCK (volatile uint32_t*) 0x3FF42018
+#define USER (volatile uint32_t*) 0x3FF4201C
+#define USER1 (volatile uint32_t*) 0x3FF42020
+#define USER2 (volatile uint32_t*) 0x3FF42024
+#define MISO_DLEN (volatile uint32_t*) 0x3FF4202C
+#define W0 (volatile uint32_t*) 0x3FF42080
+#define W1 (volatile uint32_t*) 0x3FF42084
+#define PIN (volatile uint32_t *) 0x3FF42034
+#define DPORT_PRO_CACHE_CTRL_REG (*(volatile uint32_t *) 0x3FF00040)
+#define PRO_CACHE_CTRL (*(volatile uint32_t *)0x3FF00040)
+#define CACHE_ENABLE_BIT (1u << 3)
+
+#define SPI_USR          (1u << 18)
+#define CTRL_MODE_MASK   ((1u << 26) | (1u << 25) |                 /* bit order        */ \
+                          (1u << 24) | (1u << 23) | (1u << 20) |    /* QIO, DIO, QUAD   */ \
+                          (1u << 14) | (1u << 13))                  /* DUAL, FASTRD     */
+
+static void spi1_read_flash8(uint32_t flash_addr, uint32_t *w0, uint32_t *w1)
+{
+    PRO_CACHE_CTRL &= ~(1u << 3);       
+
+    // Wait for any earlier SPI1 transaction 
+    while (*CMD & SPI_USR) { }
+
+    *USER = (1u << 31) | (1u << 30) | (1u << 28);  /* cmd + addr + MISO */
+    *USER1 = (23u << 26);   /* 24-bit addr, no dummy */
+    *USER2 = (7u << 28) | 0x03; /* 8-bit cmd 0x03 (READ) */
+    *ADDR = flash_addr << 8;  /* left-aligned 24-bit addr */
+    *MISO_DLEN = 63;  // 64 bits
+    *PIN = (1u << 1) | (1u << 2);      
+    *CTRL &= ~CTRL_MODE_MASK;            
+    *CLOCK = (7u << 12) | (3u << 6) | 7u;   //80 MHz / 8 = 10 MHz 
+
+    *W0 = 0;
+    *W1 = 0;
+
+    *CMD = SPI_USR;
+    while (*CMD & SPI_USR) { }
+
+    *w0 = *W0;
+    *w1 = *W1;
+
+    PRO_CACHE_CTRL |= CACHE_ENABLE_BIT;  
+}
+
 void uart_putc(char c) {
     while (((UART_STATUS_REG >> 16) & 0x3FF) >= 128) { }
     UART_FIFO_REG = c;
@@ -136,67 +184,71 @@ void read_segment(uint8_t segment[8], uint32_t* load_addr, uint32_t* length) {
 }
 
 
-
-void bootloader_main(void) {   
-    partition_entry_t partition_entry;
+void bootloader_main(void) {
+    uint32_t w0, w1;
+    spi1_read_flash8(0x10000, &w0, &w1);
+    print_hex32(w0);
+    uart_putc('\n');
+    print_hex32(w1);   
+    // partition_entry_t partition_entry;
     // Finding the app partition
-    for (int i=0;i<3;i++) {
-        partition_entry.magic = read_u16_le(partition[i], 0);
-        partition_entry.type = partition[i][2];
+    // for (int i=0;i<3;i++) {
+    //     partition_entry.magic = read_u16_le(partition[i], 0);
+    //     partition_entry.type = partition[i][2];
 
-        if (partition_entry.magic == 0x50AA && partition_entry.type == 0x00) {
-            for (int j = 0; j < 16; j++) {
-                partition_entry.name[j] = partition[i][12 + j];
-            }
-            partition_entry.subtype = partition[i][3];
-            partition_entry.offset = read_u32_le(partition[i], 4);
-            partition_entry.size = read_u32_le(partition[i], 8);
-            partition_entry.flags = read_u32_le(partition[i], 28);       
+    //     if (partition_entry.magic == 0x50AA && partition_entry.type == 0x00) {
+    //         for (int j = 0; j < 16; j++) {
+    //             partition_entry.name[j] = partition[i][12 + j];
+    //         }
+    //         partition_entry.subtype = partition[i][3];
+    //         partition_entry.offset = read_u32_le(partition[i], 4);
+    //         partition_entry.size = read_u32_le(partition[i], 8);
+    //         partition_entry.flags = read_u32_le(partition[i], 28);       
 
-            // Getting the app header
-            image_header_t image_header;
+    //         // Getting the app header
+    //         image_header_t image_header;
 
-            image_header.magic = image_header_raw[0];
-            image_header.segment_count = image_header_raw[1];
-            image_header.spi_mode = image_header_raw[2];
-            image_header.spi_speed = image_header_raw[3];
-            image_header.entry_point = read_u32_le(image_header_raw, 4);    
+    //         image_header.magic = image_header_raw[0];
+    //         image_header.segment_count = image_header_raw[1];
+    //         image_header.spi_mode = image_header_raw[2];
+    //         image_header.spi_speed = image_header_raw[3];
+    //         image_header.entry_point = read_u32_le(image_header_raw, 4);    
 
-            print_hex8(image_header.magic);
-            uart_putc(',');
-            print_hex8(image_header.segment_count);
-            uart_putc(',');
-            print_hex8(image_header.spi_mode);
-            uart_putc(',');
-            print_hex8(image_header.spi_speed);
-            uart_putc(',');
-            print_hex32(image_header.entry_point);
+    //         print_hex8(image_header.magic);
+    //         uart_putc(',');
+    //         print_hex8(image_header.segment_count);
+    //         uart_putc(',');
+    //         print_hex8(image_header.spi_mode);
+    //         uart_putc(',');
+    //         print_hex8(image_header.spi_speed);
+    //         uart_putc(',');
+    //         print_hex32(image_header.entry_point);
             
-            // Segment headers — NOW READ DYNAMICALLY
-            typedef int (*spi_flash_read_t)(uint32_t src_addr, uint32_t *dest, uint32_t len);
-            spi_flash_read_t spi_flash_read_func = (spi_flash_read_t) 0x40062ed8;
+    //         // Segment headers — NOW READ DYNAMICALLY
+    //         typedef int (*spi_flash_read_t)(uint32_t src_addr, uint32_t *dest, uint32_t len);
+    //         spi_flash_read_t spi_flash_read_func = (spi_flash_read_t) 0x40062ed8;
 
-            uint32_t current = 0x10000 + 24;   // app offset + header size
+    //         uint32_t current = 0x10000 + 24;   // app offset + header size
 
-            for (int s = 0; s < image_header.segment_count; s++) {
-                uint8_t seg_header[8];
-                spi_flash_read_func(current, (uint32_t *)seg_header, 8);
+    //         for (int s = 0; s < image_header.segment_count; s++) {
+    //             uint8_t seg_header[8];
+    //             spi_flash_read_func(current, (uint32_t *)seg_header, 8);
 
-                uint32_t load_addr, length;
-                read_segment(seg_header, &load_addr, &length);
+    //             uint32_t load_addr, length;
+    //             read_segment(seg_header, &load_addr, &length);
 
-                uart_putc('\n');
-                print_hex32(load_addr);
-                uart_putc(',');
-                print_hex32(length);
+    //             uart_putc('\n');
+    //             print_hex32(load_addr);
+    //             uart_putc(',');
+    //             print_hex32(length);
 
-                current = current + 8 + length;
-            }
+    //             current = current + 8 + length;
+    //         }
 
-            break;
-        }
+    //         break;
+    //     }
         
-    }
+    // }
 
     // uart_putc('\n');
     // print_hex16(partition_entry.magic);
