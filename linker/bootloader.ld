@@ -2,7 +2,9 @@ ENTRY(_start)
 
 MEMORY
 {
-    IRAM (rx) : ORIGIN = 0x40080000, LENGTH = 128K
+    APP_IRAM (rx) : ORIGIN = 0x40080000, LENGTH = 112K
+    BOOT_IRAM (rx) : ORIGIN = 0x4009C000, LENGTH = 16K
+
     DRAM (rw) : ORIGIN = 0x3FFE0000, LENGTH = 128K
 }
 
@@ -14,7 +16,7 @@ SECTIONS {
         *(.literal.*)
         *(.text)
         *(.text.*)
-    } > IRAM
+    } > BOOT_IRAM
 
     .data : 
     {

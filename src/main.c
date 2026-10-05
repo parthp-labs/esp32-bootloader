@@ -1,11 +1,25 @@
 #include <stdint.h>
 
+#define BOOT_IRAM_START  0x4009C000
+#define BOOT_IRAM_END    0x400A0000
+
 #define UART_FIFO_REG (*(volatile uint32_t *)0x3FF40000)
 #define UART_STATUS_REG (*(volatile uint32_t *)0x3FF4001C)
 
 #define TIMG0_WDTWPROTECT_REG (*(volatile uint32_t *)0x3FF5F064)
 #define TIMG0_WDTFEED_REG (*(volatile uint32_t *)0x3FF5F060)
 #define WDT_WKEY_VALUE 0x50D83AA1
+
+#define PRO_MMU_TABLE ((volatile uint32_t *)0x3FF10000)
+#define DROM_VADDR_BASE  0x3F400000
+#define IROM_VADDR_BASE  0x400D0000
+#define PAGE_SIZE        0x10000
+#define MMU_PAGE_SIZE    0x10000
+#define PRO_MMU_TABLE    ((volatile uint32_t *)0x3FF10000)
+#define DROM_BASE        0x3F400000
+#define IROM_BASE        0x40000000
+
+#define IROM_MMU_START   64
 
 #define CMD (volatile uint32_t*) 0x3FF42000
 #define ADDR (volatile uint32_t*) 0x3FF42004
@@ -183,92 +197,104 @@ void read_segment(uint8_t segment[8], uint32_t* load_addr, uint32_t* length) {
     }
 }
 
+int overlaps_bootloader(uint32_t dest, uint32_t len)
+{
+    uint32_t end = dest + len;
+
+    // overflow check
+    if (end < dest)
+        return 1;
+
+    return (dest < BOOT_IRAM_END && end > BOOT_IRAM_START);
+}
 
 void bootloader_main(void) {
+    uart_putc('A');  
     uint32_t w0, w1;
-    spi1_read_flash8(0x10000, &w0, &w1);
-    print_hex32(w0);
+    uint32_t image_entry = 0x10000;
+    spi1_read_flash8(image_entry, &w0, &w1);
+
+    uint32_t application_entry = w1;
+
+    uint8_t segment_count = (w0 >> 8);
+
     uart_putc('\n');
-    print_hex32(w1);   
-    // partition_entry_t partition_entry;
-    // Finding the app partition
-    // for (int i=0;i<3;i++) {
-    //     partition_entry.magic = read_u16_le(partition[i], 0);
-    //     partition_entry.type = partition[i][2];
+    uint32_t segment_entry = 0x10000 + 24;
+    uint32_t load_addr, length;
 
-    //     if (partition_entry.magic == 0x50AA && partition_entry.type == 0x00) {
-    //         for (int j = 0; j < 16; j++) {
-    //             partition_entry.name[j] = partition[i][12 + j];
-    //         }
-    //         partition_entry.subtype = partition[i][3];
-    //         partition_entry.offset = read_u32_le(partition[i], 4);
-    //         partition_entry.size = read_u32_le(partition[i], 8);
-    //         partition_entry.flags = read_u32_le(partition[i], 28);       
+    for (int i=0;i<segment_count;i++) {
+        spi1_read_flash8(segment_entry, &w0, &w1);
+        load_addr = w0;
+        length = w1;
+        uint32_t data_flash_addr = segment_entry + 8;
 
-    //         // Getting the app header
-    //         image_header_t image_header;
-
-    //         image_header.magic = image_header_raw[0];
-    //         image_header.segment_count = image_header_raw[1];
-    //         image_header.spi_mode = image_header_raw[2];
-    //         image_header.spi_speed = image_header_raw[3];
-    //         image_header.entry_point = read_u32_le(image_header_raw, 4);    
-
-    //         print_hex8(image_header.magic);
-    //         uart_putc(',');
-    //         print_hex8(image_header.segment_count);
-    //         uart_putc(',');
-    //         print_hex8(image_header.spi_mode);
-    //         uart_putc(',');
-    //         print_hex8(image_header.spi_speed);
-    //         uart_putc(',');
-    //         print_hex32(image_header.entry_point);
-            
-    //         // Segment headers — NOW READ DYNAMICALLY
-    //         typedef int (*spi_flash_read_t)(uint32_t src_addr, uint32_t *dest, uint32_t len);
-    //         spi_flash_read_t spi_flash_read_func = (spi_flash_read_t) 0x40062ed8;
-
-    //         uint32_t current = 0x10000 + 24;   // app offset + header size
-
-    //         for (int s = 0; s < image_header.segment_count; s++) {
-    //             uint8_t seg_header[8];
-    //             spi_flash_read_func(current, (uint32_t *)seg_header, 8);
-
-    //             uint32_t load_addr, length;
-    //             read_segment(seg_header, &load_addr, &length);
-
-    //             uart_putc('\n');
-    //             print_hex32(load_addr);
-    //             uart_putc(',');
-    //             print_hex32(length);
-
-    //             current = current + 8 + length;
-    //         }
-
-    //         break;
-    //     }
+        print_hex32(load_addr);
+        uart_putc(',');
+        print_hex32(length);
+        uart_putc('\n');
         
-    // }
+        if (overlaps_bootloader(load_addr, length)) {
+            uart_putc('X');
+            return;
+        }
 
-    // uart_putc('\n');
-    // print_hex16(partition_entry.magic);
-    // uart_putc(',');
-    // for (int j = 0; j < 16; j++) {
-    //     if (partition_entry.name[j] == '\0')
-    //         break;
+        if (load_addr >= 0x3F400000 && load_addr <  0x3F800000)
+        {
+            uint32_t flash_page = data_flash_addr & 0xFFFF0000;
 
-    //     uart_putc(partition_entry.name[j]);
-    // }
-    // uart_putc(',');
-    // print_hex8(partition_entry.subtype);
-    // uart_putc(',');
-    // print_hex32(partition_entry.size);
-    // uart_putc(',');
-    // print_hex32(partition_entry.offset);
-    // uart_putc(',');
-    // print_hex32(partition_entry.flags);
+            uint32_t virtual_page = load_addr & 0xFFFF0000;
+
+            uint32_t flash_page_num =flash_page >> 16;
+
+            uint32_t mmu_index = (virtual_page - DROM_BASE) >> 16;
+
+            uint32_t pages = ((load_addr & 0xFFFF) + length + MMU_PAGE_SIZE - 1) / MMU_PAGE_SIZE;
+
+            for (uint32_t p = 0; p < pages; p++) {
+                PRO_MMU_TABLE[mmu_index + p] = flash_page_num + p;
+            }
+        }
+        else if (load_addr >= 0x400D0000 && load_addr <  0x40400000)
+        {
+            int32_t flash_page =data_flash_addr & 0xFFFF0000;
+
+            uint32_t virtual_page = load_addr & 0xFFFF0000;
+
+            uint32_t flash_page_num =
+                flash_page >> 16;
+
+            uint32_t mmu_index = IROM_MMU_START + ((virtual_page - IROM_BASE) >> 16);
+
+            uint32_t pages = ((load_addr & 0xFFFF) + length + MMU_PAGE_SIZE - 1) / MMU_PAGE_SIZE;
+
+            for (uint32_t p = 0; p < pages; p++) {
+                PRO_MMU_TABLE[mmu_index + p] = flash_page_num + p;
+            }
+        }
+        else
+        {
+            uint32_t flash_addr = segment_entry + 8;
+            uint32_t dest = load_addr;
+            uint32_t remaining = length;
+
+            while (remaining >= 8) {
+                spi1_read_flash8(flash_addr, &w0, &w1);
+                
+                *(volatile uint32_t *)(dest + 0) = w0;
+                *(volatile uint32_t *)(dest + 4) = w1;
+
+                flash_addr += 8;
+                dest += 8;
+                remaining -= 8;
+            }
+        }
+        uart_putc('B');
+        segment_entry += length + 8;
+    }
+    uart_putc('C');
 
     while (1) {
         feed_watchdog();
     }
+    
 }

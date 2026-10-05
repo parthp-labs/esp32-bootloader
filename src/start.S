@@ -16,7 +16,7 @@ _start:
     l32r a3, bss_end_ptr        # a3 = end boundary
     movi a4, 0                  # a4 = 0 (value to store)
 
-bss_zero_loop:
+bss_zero_loop:  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
     bgeu  a2, a3, bss_zero_done  # if current >= end, exit loop
     s32i  a4, a2, 0              # store 0 at [current]
     addi  a2, a2, 4              # current += 4
